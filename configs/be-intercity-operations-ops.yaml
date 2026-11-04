@@ -5,6 +5,7 @@ app_name: be-intercity-ops-prod
 aws_region: ap-south-1
 
 lambda:
+  function_name: be-intercity-ops-prod-fn
   runtime: python3.12
   # Assumes lambda_function.py defines lambda_handler(event, context).
   handler: lambda_function.lambda_handler
@@ -20,8 +21,15 @@ sqs:
   queue_name: be-intercity-ops-prod-queue
   visibility_timeout: 60
 
+codebuild:
+  project_name: be-intercity-ops-prod-build
+  buildspec: buildspec.yml
+  image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+  compute_type: BUILD_GENERAL1_SMALL
+
 codepipeline:
   source_provider: CodeCommit
-  repository_name: be-intercity-ops-prod
+  repository_name: be-intercity-operations-ops
   branch: main
+  pipeline_name: be-intercity-ops-prod-pipeline
   artifact_bucket: be-intercity-ops-prod-pipeline-artifacts-272241365614

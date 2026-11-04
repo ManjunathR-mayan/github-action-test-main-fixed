@@ -10,7 +10,7 @@
 #   - Optional Lambda Layer
 #   - CodeBuild project
 #   - S3 artifact bucket
-#   - CodePipeline (Source: CodeStarSourceConnection -> Build: CodeBuild)
+#   - CodePipeline (Source: CodeCommit or CodeStarSourceConnection -> CodeBuild)
 #
 set -euo pipefail
 
@@ -141,9 +141,12 @@ CB_COMPUTE=$(jqv_or '.codebuild.compute_type' "BUILD_GENERAL1_SMALL")
 # ---------- CodePipeline ----------
 
 CP_NAME=$(jqv '.codepipeline.pipeline_name')
+SOURCE_PROVIDER=$(jqv_or '.codepipeline.source_provider' "CodeStarSourceConnection")
 GH_OWNER=$(jqv '.codepipeline.github_owner')
 GH_REPO=$(jqv '.codepipeline.github_repo')
 GH_BRANCH=$(jqv_or '.codepipeline.github_branch' "main")
+CC_REPO=$(jqv '.codepipeline.repository_name')
+CC_BRANCH=$(jqv_or '.codepipeline.branch' "main")
 CONNECTION_ARN=$(jqv_or '.codepipeline.connection_arn' "")
 
 ARTIFACT_BUCKET=$(
@@ -163,23 +166,45 @@ echo "App: $APP_NAME | Region: $AWS_REGION | Account: $ACCOUNT_ID"
 # ---------- Fail-fast validation ----------
 
 if [ "$SKIP_CODE_SERVICES" != "true" ]; then
+  case "$SOURCE_PROVIDER" in
+    CodeCommit)
+      if [ -z "$CC_REPO" ] || [ "$CC_REPO" = "null" ]; then
+        echo "ERROR: codepipeline.repository_name is required for CodeCommit." >&2
+        exit 1
+      fi
+      ;;
+    CodeStarSourceConnection)
+      if [ -z "$CONNECTION_ARN" ] || [[ "$CONNECTION_ARN" == *REPLACE-ME* ]]; then
+        echo "ERROR: codepipeline.connection_arn is required for GitHub." >&2
+        exit 1
+      fi
+      if [ "$GH_OWNER" = "your-github-org" ] || [ "$GH_REPO" = "your-repo-name" ] || [ "$GH_OWNER" = "null" ] || [ "$GH_REPO" = "null" ]; then
+        echo "ERROR: codepipeline.github_owner/github_repo must identify the GitHub repository." >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "ERROR: Unsupported codepipeline.source_provider: $SOURCE_PROVIDER" >&2
+      echo "       Supported providers: CodeCommit, CodeStarSourceConnection" >&2
+      exit 1
+      ;;
+  esac
+fi
 
-  if [ -z "$CONNECTION_ARN" ] ||
-     [[ "$CONNECTION_ARN" == *REPLACE-ME* ]]; then
-
-    echo "ERROR: codepipeline.connection_arn in $CONFIG_FILE is empty or still a placeholder." >&2
-    echo "       Authorize a CodeStar/CodeConnections connection to GitHub first." >&2
-    echo "       Then put its real ARN in the config." >&2
-    exit 1
-  fi
-
-  if [ "$GH_OWNER" = "your-github-org" ] ||
-     [ "$GH_REPO" = "your-repo-name" ]; then
-
-    echo "ERROR: codepipeline.github_owner/github_repo in $CONFIG_FILE are still placeholders." >&2
-    echo "       Set them to the real GitHub repository." >&2
-    exit 1
-  fi
+if [ "$SOURCE_PROVIDER" = "CodeCommit" ]; then
+  SOURCE_ACTION_PROVIDER="CodeCommit"
+  SOURCE_CONFIGURATION=$(jq -cn --arg repo "$CC_REPO" --arg branch "$CC_BRANCH" \
+    '{RepositoryName:$repo,BranchName:$branch,PollForSourceChanges:"true"}')
+  SOURCE_POLICY_STATEMENT=$(jq -cn \
+    --arg arn "arn:aws:codecommit:${AWS_REGION}:${ACCOUNT_ID}:${CC_REPO}" \
+    '{Effect:"Allow",Action:["codecommit:CancelUploadArchive","codecommit:GetBranch","codecommit:GetCommit","codecommit:GetUploadArchiveStatus","codecommit:UploadArchive"],Resource:$arn}')
+else
+  SOURCE_ACTION_PROVIDER="CodeStarSourceConnection"
+  SOURCE_CONFIGURATION=$(jq -cn --arg connection "$CONNECTION_ARN" \
+    --arg repository "${GH_OWNER}/${GH_REPO}" --arg branch "$GH_BRANCH" \
+    '{ConnectionArn:$connection,FullRepositoryId:$repository,BranchName:$branch,OutputArtifactFormat:"CODE_ZIP",DetectChanges:"true"}')
+  SOURCE_POLICY_STATEMENT=$(jq -cn --arg connection "$CONNECTION_ARN" \
+    '{Effect:"Allow",Action:["codestar-connections:UseConnection","codestar-connections:GetConnectionToken","codestar-connections:GetConnection","codeconnections:UseConnection","codeconnections:GetConnectionToken","codeconnections:GetConnection"],Resource:$connection}')
 fi
 
 # ---------- Helpers ----------
@@ -794,38 +819,20 @@ ensure_codepipeline_role() {
 
   fi
 
-  # ----------------------------------------------------------
-  # Verify GitHub connection
-  # ----------------------------------------------------------
-
-  if aws codeconnections get-connection \
-    --connection-arn "$CONNECTION_ARN" \
-    --query 'Connection.ConnectionStatus' \
-    --output text \
-    >/dev/null 2>&1; then
-
-    connection_status=$(
-      aws codeconnections get-connection \
+  if [ "$SOURCE_PROVIDER" = "CodeStarSourceConnection" ]; then
+    if aws codeconnections get-connection --connection-arn "$CONNECTION_ARN" \
+      --query 'Connection.ConnectionStatus' --output text >/dev/null 2>&1; then
+      connection_status=$(aws codeconnections get-connection \
         --connection-arn "$CONNECTION_ARN" \
-        --query 'Connection.ConnectionStatus' \
-        --output text
-    )
-
-    if [ "$connection_status" != "AVAILABLE" ]; then
-
-      echo "ERROR: CodeConnections connection is not AVAILABLE:" >&2
-      echo "       $CONNECTION_ARN" >&2
-      echo "       Status: $connection_status" >&2
-
+        --query 'Connection.ConnectionStatus' --output text)
+      if [ "$connection_status" != "AVAILABLE" ]; then
+        echo "ERROR: CodeConnections connection is not AVAILABLE: $CONNECTION_ARN (status: $connection_status)" >&2
+        return 1
+      fi
+    else
+      echo "ERROR: Could not read CodeConnections connection: $CONNECTION_ARN" >&2
       return 1
     fi
-
-  else
-
-    echo "ERROR: Could not read CodeConnections connection:" >&2
-    echo "       $CONNECTION_ARN" >&2
-
-    return 1
   fi
 
   # ----------------------------------------------------------
@@ -866,18 +873,7 @@ ensure_codepipeline_role() {
           \"Resource\": \"arn:aws:codebuild:${AWS_REGION}:${ACCOUNT_ID}:project/${CB_PROJECT}\"
         },
 
-        {
-          \"Effect\": \"Allow\",
-          \"Action\": [
-            \"codestar-connections:UseConnection\",
-            \"codestar-connections:GetConnectionToken\",
-            \"codestar-connections:GetConnection\",
-            \"codeconnections:UseConnection\",
-            \"codeconnections:GetConnectionToken\",
-            \"codeconnections:GetConnection\"
-          ],
-          \"Resource\": \"${CONNECTION_ARN}\"
-        }
+        ${SOURCE_POLICY_STATEMENT}
 
       ]
     }" \
@@ -914,7 +910,7 @@ ensure_codepipeline() {
           "actionTypeId": {
             "category": "Source",
             "owner": "AWS",
-            "provider": "CodeStarSourceConnection",
+            "provider": "${SOURCE_ACTION_PROVIDER}",
             "version": "1"
           },
           "outputArtifacts": [
@@ -922,13 +918,7 @@ ensure_codepipeline() {
               "name": "SourceOutput"
             }
           ],
-          "configuration": {
-            "ConnectionArn": "${CONNECTION_ARN}",
-            "FullRepositoryId": "${GH_OWNER}/${GH_REPO}",
-            "BranchName": "${GH_BRANCH}",
-            "OutputArtifactFormat": "CODE_ZIP",
-            "DetectChanges": "true"
-          }
+          "configuration": ${SOURCE_CONFIGURATION}
         }]
       },
 
