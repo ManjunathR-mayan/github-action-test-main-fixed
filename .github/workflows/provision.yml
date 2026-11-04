@@ -17,10 +17,7 @@ on:
         type: choice
         required: true
         options:
-          - "configs/example-app.yaml"
-          - "configs/order-processor2.yaml"
-          - "configs/order-processor3.yaml"
-          - "configs/shared-layer-lambda.yaml"
+          - "configs/be-intercity-operations-ops.yaml"
           - "configs/testing-process.yaml"
 
 permissions:
@@ -42,7 +39,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ap-south-1
 
       - name: Set up Python (for YAML -> JSON parsing)
         uses: actions/setup-python@v7

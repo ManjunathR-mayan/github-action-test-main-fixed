@@ -1,0 +1,27 @@
+# Provisions an independent Lambda, SQS queue, CodeBuild project, and
+# CodePipeline for the be-intercity-operations-ops CodeCommit repository.
+app_name: be-intercity-ops-prod
+
+aws_region: ap-south-1
+
+lambda:
+  runtime: python3.12
+  # Assumes lambda_function.py defines lambda_handler(event, context).
+  handler: lambda_function.lambda_handler
+  memory_size: 256
+  timeout: 30
+  # The CodeCommit repository has lambda_function.py and buildspec.yml at its root.
+  source_dir: .
+  reconcile_existing: false
+  environment:
+    APP_NAME: be-intercity-ops-prod
+
+sqs:
+  queue_name: be-intercity-ops-prod-queue
+  visibility_timeout: 60
+
+codepipeline:
+  source_provider: CodeCommit
+  repository_name: be-intercity-ops-prod
+  branch: main
+  artifact_bucket: be-intercity-ops-prod-pipeline-artifacts-272241365614
