@@ -394,6 +394,10 @@ ensure_lambda_role() {
     }" \
     >/dev/null
 
+  # The role may already exist, and inline policy changes can take time to
+  # propagate to Lambda's event source mapping validator.
+  wait_for_role_propagation
+
   echo "$arn"
 }
 
@@ -581,11 +585,34 @@ ensure_event_source_mapping() {
   fi
 
   echo "Creating SQS -> Lambda event source mapping"
-  aws lambda create-event-source-mapping \
-    --function-name "$LAMBDA_NAME" \
-    --event-source-arn "$queue_arn" \
-    --batch-size 10 \
-    >/dev/null
+  local attempt=1
+  local max_attempts=8
+  local delay=5
+  local output
+
+  while :; do
+    if output=$(aws lambda create-event-source-mapping \
+      --function-name "$LAMBDA_NAME" \
+      --event-source-arn "$queue_arn" \
+      --batch-size 10 2>&1); then
+      [ -n "$output" ] && printf '%s\n' "$output"
+      return 0
+    fi
+
+    # Lambda validates SQS permissions at mapping creation. Retry only the
+    # eventual-consistency error for the policy this script just installed.
+    if echo "$output" | grep -qi "does not have permissions to call ReceiveMessage" &&
+      [ "$attempt" -lt "$max_attempts" ]; then
+      echo "  ...SQS permissions not propagated yet (attempt ${attempt}/${max_attempts}), retrying in ${delay}s" >&2
+      sleep "$delay"
+      attempt=$((attempt + 1))
+      delay=$((delay * 2))
+      continue
+    fi
+
+    printf '%s\n' "$output" >&2
+    return 1
+  done
 }
 
 # ============================================================
