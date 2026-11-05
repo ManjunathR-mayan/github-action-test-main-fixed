@@ -18,6 +18,8 @@ on:
         required: true
         options:
           - "configs/be-intercity-operations-ops.yaml"
+          - "configs/be-intercity-ops-dev.yaml"
+          - "configs/be-intercity-ops-staging.yaml"
           - "configs/testing-process.yaml"
 
 permissions:

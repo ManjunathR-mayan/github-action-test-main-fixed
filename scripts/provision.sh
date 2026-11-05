@@ -726,7 +726,10 @@ ensure_codebuild_role() {
             \"lambda:GetFunction\",
             \"lambda:GetFunctionConfiguration\"
           ],
-          \"Resource\": \"arn:aws:lambda:${AWS_REGION}:${ACCOUNT_ID}:function:${LAMBDA_NAME}\"
+          \"Resource\": [
+            \"arn:aws:lambda:${AWS_REGION}:${ACCOUNT_ID}:function:${LAMBDA_NAME}\",
+            \"arn:aws:lambda:${AWS_REGION}:${ACCOUNT_ID}:function:be-intercity-operations-ops-*\"
+          ]
         }
 
       ]
