@@ -5,7 +5,7 @@ app_name: be-intercity-ops-dev
 aws_region: ap-south-1
 
 lambda:
-  function_name: be-intercity-ops-dev-fn
+  function_name: be-intercity-ops-dev
   runtime: python3.12
   # Assumes lambda_function.py defines lambda_handler(event, context).
   handler: lambda_function.lambda_handler
