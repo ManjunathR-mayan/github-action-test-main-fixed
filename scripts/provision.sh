@@ -1055,17 +1055,20 @@ fi
 
 if [ "$LAMBDA_EXISTS" = "true" ]; then
   # Existing Lambda is strictly no-touch. Do not package code, publish layers,
-  # update configuration, or modify its event source mapping.
+  # or update its configuration.
   ZIP_PATH=""
   BUILT_LAYER_ARN=""
   deploy_lambda "$LAMBDA_ROLE_ARN" "$ZIP_PATH" "$QUEUE_URL" "$BUILT_LAYER_ARN"
-  echo "Existing Lambda detected: its current SQS trigger/configuration is preserved."
+  echo "Existing Lambda detected: its current code and configuration are preserved."
 else
   ZIP_PATH=$(package_lambda)
   BUILT_LAYER_ARN=$(ensure_lambda_layer)
   deploy_lambda "$LAMBDA_ROLE_ARN" "$ZIP_PATH" "$QUEUE_URL" "$BUILT_LAYER_ARN"
-  ensure_event_source_mapping "$QUEUE_ARN"
 fi
+
+# Ensure this config's queue triggers the Lambda whether the function was just
+# created or already existed. The helper checks for an existing mapping first.
+ensure_event_source_mapping "$QUEUE_ARN"
 
 ensure_artifact_bucket
 

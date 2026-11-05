@@ -97,7 +97,9 @@ to finish the OAuth step:
 4. Re-running (pushing an edited config, or `workflow_dispatch`) is safe.
    A missing Lambda is created, but an existing Lambda is preserved by
    default: manual code, runtime, layer, version, and configuration changes
-   are not replaced or deleted. The workflow also does not publish another
+   are not replaced or deleted. Provisioning also ensures the configured SQS
+   queue has an event source mapping to the Lambda, including for an existing
+   function. The workflow does not publish another
    configured layer version in this mode, and CodeBuild skips its Lambda-code
    deployment so a later pipeline run cannot replace a manual code version.
 
